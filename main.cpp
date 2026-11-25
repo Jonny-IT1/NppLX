@@ -51,6 +51,11 @@
 #include <QTextDocument>
 #include <QTextStream>
 #include <QTimer>
+#include <QElapsedTimer>
+#include <QHash>
+#include <QProcess>
+#include <QTemporaryDir>
+#include <QUrl>
 #include <QToolBar>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -128,20 +133,20 @@ QColor roleColor(const std::string &role, bool dark)
 {
     static const std::unordered_map<std::string,
                                     std::pair<const char *, const char *>> M = {
-        {"comment",   {"#6a9955", "#008000"}},
-        {"string",    {"#ce9178", "#a31515"}},
-        {"number",    {"#b5cea8", "#098658"}},
-        {"keyword",   {"#569cd6", "#0000ff"}},
-        {"type",      {"#4ec9b0", "#2b91af"}},
-        {"operator",  {"#d4d4d4", "#000000"}},
-        {"tag",       {"#569cd6", "#a31515"}},
-        {"preproc",   {"#c586c0", "#0000ff"}},
-        {"decorator", {"#c586c0", "#0000ff"}},
-        {"default",   {"#d4d4d4", "#000000"}},
+        {"comment",   {"#6a7482", "#808a94"}},
+        {"string",    {"#9ecb8f", "#35793d"}},
+        {"number",    {"#e6b450", "#a35412"}},
+        {"keyword",   {"#6fb3e0", "#1163a6"}},
+        {"type",      {"#d08fd6", "#8a2fbf"}},
+        {"operator",  {"#c9d2dc", "#2a2f36"}},
+        {"tag",       {"#6fb3e0", "#1163a6"}},
+        {"preproc",   {"#c79eda", "#9b2fa1"}},
+        {"decorator", {"#ffb454", "#a35412"}},
+        {"default",   {"#c9d2dc", "#2a2f36"}},
     };
     const auto it = M.find(role);
     if (it == M.end())
-        return QColor(dark ? "#d4d4d4" : "#000000");
+        return QColor(dark ? "#c9d2dc" : "#2a2f36");
     return QColor(dark ? it->second.first : it->second.second);
 }
 
@@ -415,8 +420,598 @@ static QString mdEscape(const QString &s)
     return r;
 }
 
-// Inline elements: code spans are protected by placeholders first,
-// then images (rendered as a hint), links, bold, italic, strikethrough.
+// Fence bodies are HTML-escaped for display; revert before the executor
+// writes the script to a file or pipes it to stdin. &amp; must run last.
+static QString mdUnescape(const QString &s)
+{
+    QString r(s);
+    r.replace(QLatin1String("&lt;"), QLatin1String("<"));
+    r.replace(QLatin1String("&gt;"), QLatin1String(">"));
+    r.replace(QLatin1String("&quot;"), QLatin1String("\""));
+    r.replace(QLatin1String("&amp;"), QLatin1String("&"));
+    return r;
+}
+
+// Studio palettes for the whole application (Fusion style + QSS below).
+// Both themes share one idea: a quiet workbench surface, warm dark graphite
+// or warm paper, with a single amber accent for the caret/active tab and a
+// calm blue for links and selection.
+static QPalette studioPalette(bool darkTheme)
+{
+    QPalette pal;
+    if (darkTheme) {
+        const QColor window("#151a21"), text("#c9d2dc");
+        pal.setColor(QPalette::Window, window);
+        pal.setColor(QPalette::WindowText, text);
+        pal.setColor(QPalette::Base, QColor("#10151b"));
+        pal.setColor(QPalette::AlternateBase, QColor("#161b23"));
+        pal.setColor(QPalette::Text, text);
+        pal.setColor(QPalette::Button, QColor("#232a34"));
+        pal.setColor(QPalette::ButtonText, text);
+        pal.setColor(QPalette::ToolTipBase, QColor("#1c222b"));
+        pal.setColor(QPalette::ToolTipText, text);
+        pal.setColor(QPalette::Highlight, QColor("#2a4a66"));
+        pal.setColor(QPalette::HighlightedText, QColor("#ffffff"));
+        pal.setColor(QPalette::Link, QColor("#6fb3e0"));
+        pal.setColor(QPalette::LinkVisited, QColor("#6fb3e0"));
+        pal.setColor(QPalette::Disabled, QPalette::Text, QColor("#5a626c"));
+        pal.setColor(QPalette::Disabled, QPalette::WindowText,
+                     QColor("#5a626c"));
+        pal.setColor(QPalette::Disabled, QPalette::ButtonText,
+                     QColor("#5a626c"));
+        return pal;
+    }
+    pal.setColor(QPalette::Window, QColor("#efece5"));
+    pal.setColor(QPalette::WindowText, QColor("#2a2f36"));
+    pal.setColor(QPalette::Base, QColor("#fbfaf7"));
+    pal.setColor(QPalette::AlternateBase, QColor("#f3f0e9"));
+    pal.setColor(QPalette::Text, QColor("#2a2f36"));
+    pal.setColor(QPalette::Button, QColor("#e2ded4"));
+    pal.setColor(QPalette::ButtonText, QColor("#2a2f36"));
+    pal.setColor(QPalette::ToolTipBase, QColor("#fbfaf7"));
+    pal.setColor(QPalette::ToolTipText, QColor("#2a2f36"));
+    pal.setColor(QPalette::Highlight, QColor("#b3d4f5"));
+    pal.setColor(QPalette::HighlightedText, QColor("#14212e"));
+    pal.setColor(QPalette::Link, QColor("#1163a6"));
+    pal.setColor(QPalette::LinkVisited, QColor("#1163a6"));
+    pal.setColor(QPalette::Disabled, QPalette::Text, QColor("#9a948a"));
+    pal.setColor(QPalette::Disabled, QPalette::WindowText, QColor("#9a948a"));
+    pal.setColor(QPalette::Disabled, QPalette::ButtonText, QColor("#9a948a"));
+    return pal;
+}
+
+static QString appStyleSheet(bool darkTheme)
+{
+    if (darkTheme) {
+        return QStringLiteral(
+            "QToolBar { border: none; padding: 3px 6px; spacing: 3px; "
+            "background: #151a21; }"
+            "QDockWidget::title { padding: 5px 10px; background: #151a21; "
+            "border-bottom: 1px solid #232b35; color: #c9d2dc; }"
+            "QStatusBar { background: #10151b; color: #8a94a2; }"
+            "QMainWindow::separator { background: #232b35; "
+            "width: 2px; height: 2px; }"
+            "QTabBar::tab { padding: 5px 12px; color: #8a94a2; }"
+            "QTabBar::tab:selected { color: #e4e9ef; "
+            "border-bottom: 2px solid #ffb454; }"
+            "QTreeWidget { border: 1px solid #232b35; }"
+            "QTextEdit, QTextBrowser { border: none; }");
+    }
+    return QStringLiteral(
+        "QToolBar { border: none; padding: 3px 6px; spacing: 3px; "
+        "background: #efece5; }"
+        "QDockWidget::title { padding: 5px 10px; background: #efece5; "
+        "border-bottom: 1px solid #d8d3c8; color: #2a2f36; }"
+        "QStatusBar { background: #fbfaf7; color: #6b675f; }"
+        "QMainWindow::separator { background: #d8d3c8; "
+        "width: 2px; height: 2px; }"
+        "QTabBar::tab { padding: 5px 12px; color: #6b675f; }"
+        "QTabBar::tab:selected { color: #2a2f36; "
+        "border-bottom: 2px solid #a35412; }"
+        "QTreeWidget { border: 1px solid #d8d3c8; }"
+        "QTextEdit, QTextBrowser { border: none; }");
+}
+
+// Preview theme flag: the Markdown renderer produces small inline styles
+// (code-block headers, run links) that must follow the active theme.
+static bool gPreviewDark = false;
+static void setPreviewDark(bool dark) { gPreviewDark = dark; }
+static QString mdBarBg()  { return gPreviewDark ? QStringLiteral("#1c222b") : QStringLiteral("#efece5"); }
+static QString mdBarFg()  { return gPreviewDark ? QStringLiteral("#8a94a2") : QStringLiteral("#6b675f"); }
+static QString mdAccent() { return gPreviewDark ? QStringLiteral("#6fb3e0") : QStringLiteral("#1163a6"); }
+static QString mdOutHead(){ return gPreviewDark ? QStringLiteral("#ffb454") : QStringLiteral("#a35412"); }
+
+struct RunBlock {
+    QString lang;   // normalized: "c", "cpp", "python", "sql" (empty: not runnable)
+    QString code;   // raw code inside the fence
+};
+
+static QString runBlockKey(const QString &lang, const QString &code)
+{
+    return lang + QChar(1) + code;
+}
+
+static QString normalizeRunLang(const QString &info)
+{
+    const QString f = info.section(QChar(' '), 0, 0).toLower();
+    if (f == QLatin1String("c"))
+        return QStringLiteral("c");
+    if (f == QLatin1String("cpp") || f == QLatin1String("c++")
+        || f == QLatin1String("cxx") || f == QLatin1String("cc"))
+        return QStringLiteral("cpp");
+    if (f == QLatin1String("python") || f == QLatin1String("py")
+        || f == QLatin1String("python3"))
+        return QStringLiteral("python");
+    if (f == QLatin1String("sql") || f == QLatin1String("sqlite")
+        || f == QLatin1String("sqlite3"))
+        return QStringLiteral("sql");
+    return QString();
+}
+
+static QString runLanguageLabel(const QString &lang)
+{
+    if (lang == QLatin1String("c"))      return QStringLiteral("C");
+    if (lang == QLatin1String("cpp"))    return QStringLiteral("C++");
+    if (lang == QLatin1String("python"))return QStringLiteral("Python");
+    if (lang == QLatin1String("sql"))   return QStringLiteral("SQL");
+    return QString();
+}
+
+// Program arguments per language (phase 0: compile for C/C++, direct run for
+// python/sql). Pure function, white-box-testable.
+static QStringList executorArgs(const QString &lang, const QString &scriptPath,
+                                const QString &binPath)
+{
+    if (lang == QLatin1String("python"))
+        return QStringList{scriptPath};
+    if (lang == QLatin1String("sql"))
+        return QStringList{QStringLiteral(":memory:")};
+    if (lang == QLatin1String("c") || lang == QLatin1String("cpp"))
+        return QStringList{scriptPath, QStringLiteral("-o"), binPath};
+    return QStringList();
+}
+
+static QString defaultExecutor(const QString &lang)
+{
+    if (lang == QLatin1String("python")) return QStringLiteral("/usr/bin/python3");
+    if (lang == QLatin1String("sql"))    return QStringLiteral("/usr/bin/sqlite3");
+    if (lang == QLatin1String("cpp"))    return QStringLiteral("/usr/bin/g++");
+    return QStringLiteral("/usr/bin/gcc");
+}
+
+// sqlite3 reads the script from stdin; headers/column mode for readable output.
+static QString sqliteStdinScript(const QString &sql)
+{
+    return QStringLiteral(".headers on\n.mode column\n") + sql
+           + QLatin1Char('\n');
+}
+
+static QString formatRunResult(int exitCode, const QString &output,
+                               qint64 elapsedMs, bool timedOut,
+                               const QString &phase)
+{
+    QString head;
+    if (timedOut)
+        head = QStringLiteral("Zeitlimit \u00fcberschritten (10 s) - "
+                              "Ausf\u00fchrung abgebrochen");
+    else
+        head = QStringLiteral("Exit %1 (%2 s)")
+                   .arg(exitCode)
+                   .arg(QString::number(elapsedMs / 1000.0, 'f', 2));
+    if (!phase.isEmpty())
+        head.prepend(phase + QStringLiteral(": "));
+    const QString body = output.isEmpty()
+                             ? QStringLiteral("(keine Ausgabe)")
+                             : output;
+    return head + QLatin1Char('\n') + body;
+}
+
+struct RunJob {
+    QProcess *proc = nullptr;
+    QTimer *killer = nullptr;
+    QTemporaryDir *dir = nullptr;
+    QElapsedTimer clock;
+    int phase = -1;          // 0 = compile (c/cpp), 1 = run binary, 2 = direct
+    QString lang;
+    QString key;
+    QString binPath;
+    QString output;
+    bool timedOut = false;
+    bool capped = false;
+};
+
+// ---------------------------------------------------------------------------
+// Lightweight inline TeX subset (Unicode approximation) for the Markdown
+// preview and the PDF export. No external tools: $...$, $$...$$, \(...\) and
+// \[...\] are converted to styled Unicode text (Greek letters, operators,
+// fractions, roots, sub-/superscripts, \mathbb/\mathbf/\text, common
+// function names). A pragmatic subset, not a full LaTeX engine.
+// ---------------------------------------------------------------------------
+
+static QString texSymbol(const QString &cmd)
+{
+    static const struct { const char *name; ushort sym; } M[] = {
+        // Greek letters
+        {"alpha", 0x03b1}, {"beta", 0x03b2}, {"gamma", 0x03b3},
+        {"delta", 0x03b4}, {"epsilon", 0x03b5}, {"varepsilon", 0x03b5},
+        {"zeta", 0x03b6}, {"eta", 0x03b7}, {"theta", 0x03b8},
+        {"vartheta", 0x03d1}, {"iota", 0x03b9}, {"kappa", 0x03ba},
+        {"lambda", 0x03bb}, {"mu", 0x03bc}, {"nu", 0x03bd}, {"xi", 0x03be},
+        {"pi", 0x03c0}, {"rho", 0x03c1}, {"sigma", 0x03c3}, {"tau", 0x03c4},
+        {"upsilon", 0x03c5}, {"phi", 0x03c6}, {"varphi", 0x03d5},
+        {"chi", 0x03c7}, {"psi", 0x03c8}, {"omega", 0x03c9},
+        {"Gamma", 0x0393}, {"Delta", 0x0394}, {"Theta", 0x0398},
+        {"Lambda", 0x039b}, {"Xi", 0x039e}, {"Pi", 0x03a0}, {"Sigma", 0x03a3},
+        {"Upsilon", 0x03a5}, {"Phi", 0x03a6}, {"Psi", 0x03a8}, {"Omega", 0x03a9},
+        // Relation and binary operators
+        {"pm", 0x00b1}, {"mp", 0x2213}, {"times", 0x00d7}, {"div", 0x00f7},
+        {"cdot", 0x22c5}, {"ast", 0x2217}, {"star", 0x22c6}, {"circ", 0x2218},
+        {"bullet", 0x2219}, {"oplus", 0x2295}, {"ominus", 0x2296},
+        {"otimes", 0x2297}, {"cup", 0x222a}, {"cap", 0x2229},
+        {"setminus", 0x2216}, {"leq", 0x2264}, {"le", 0x2264},
+        {"geq", 0x2265}, {"ge", 0x2265}, {"neq", 0x2260}, {"ne", 0x2260},
+        {"approx", 0x2248}, {"equiv", 0x2261}, {"sim", 0x223c},
+        {"simeq", 0x2243}, {"propto", 0x221d}, {"ll", 0x226a}, {"gg", 0x226b},
+        {"prec", 0x227a}, {"succ", 0x227b}, {"subset", 0x2282},
+        {"subseteq", 0x2286}, {"supset", 0x2283}, {"supseteq", 0x2287},
+        {"elem", 0x2208}, {"in", 0x2208}, {"notin", 0x2209}, {"ni", 0x220b},
+        {"emptyset", 0x2205}, {"varnothing", 0x2205},
+        {"perp", 0x22a5}, {"parallel", 0x2225}, {"angle", 0x2220},
+        {"wedge", 0x2227}, {"vee", 0x2228}, {"neg", 0x00ac},
+        {"Rightarrow", 0x21d2}, {"Leftarrow", 0x21d0},
+        {"Leftrightarrow", 0x21d4}, {"leftrightarrow", 0x2194},
+        {"rightarrow", 0x2192}, {"to", 0x2192}, {"leftarrow", 0x2190},
+        {"longrightarrow", 0x27f6}, {"mapsto", 0x21a6},
+        {"uparrow", 0x2191}, {"downarrow", 0x2193}, {"updownarrow", 0x2195},
+        // Calculus and large operators
+        {"int", 0x222b}, {"iint", 0x222c}, {"iiint", 0x222d},
+        {"oint", 0x222e}, {"sum", 0x2211}, {"prod", 0x220f},
+        {"bigcup", 0x22c3}, {"bigcap", 0x22c2},
+        {"partial", 0x2202}, {"nabla", 0x2207}, {"infty", 0x221e},
+        {"hbar", 0x210f}, {"ell", 0x2113}, {"exists", 0x2203},
+        {"nexists", 0x2204},
+        // Misc
+        {"ldots", 0x2026}, {"cdots", 0x22ef}, {"vdots", 0x22ee},
+        {"ddots", 0x22f1}, {"dots", 0x2026}, {"prime", 0x2032},
+        {"deg", 0x00b0}, {"dagger", 0x2020}, {"ddagger", 0x2021},
+        {"flat", 0x266d}, {"natural", 0x266e}, {"sharp", 0x266f},
+    };
+    for (const auto &e : M) {
+        const QString name = QString::fromLatin1(e.name);
+        if (cmd == name)
+            return QString(QChar(e.sym));
+    }
+    return QString();
+}
+
+// Operator names typeset upright (not italic variables).
+static bool texIsFunctionName(const QString &cmd)
+{
+    static const char *const N[] = {
+        "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan",
+        "sinh", "cosh", "tanh", "coth", "ln", "log", "lg", "exp", "lim",
+        "max", "min", "sup", "inf", "det", "dim", "ker", "gcd", "arg",
+        "Hom", "Pr", "mod", "bmod",
+    };
+    for (const char *n : N) {
+        if (cmd == QLatin1String(n))
+            return true;
+    }
+    return false;
+}
+
+// Parses one atom (single char, braced group, or command with arguments)
+// starting at index i and advances i. srcPlain receives the source text of
+// plain atoms (used by \frac for bracket decisions). Returns HTML.
+static QString texParseAtom(const QString &tex, int &i, QString *srcPlain);
+
+// Parses a sequence until end or the stop character (stop not consumed).
+static QString texParseSeq(const QString &tex, int &i, QChar stop)
+{
+    const int n = tex.size();
+    QString out;
+    while (i < n) {
+        const QChar c = tex.at(i);
+        if (!stop.isNull() && c == stop)
+            break;
+        if (c == QLatin1Char('^') || c == QLatin1Char('_')) {
+            ++i;
+            QString arg;
+            if (i < n && (tex.at(i) == QLatin1Char('{')
+                          || tex.at(i) == QLatin1Char('\\'))) {
+                // Braced group or control word (e.g. ^\infty): the atom
+                // parser returns HTML-safe output and consumes the atom.
+                QString plain;
+                const int before = i;
+                arg = texParseAtom(tex, i, &plain);
+                if (i == before) { // safety fallback: single token
+                    arg = QString(tex.at(i)).toHtmlEscaped();
+                    ++i;
+                }
+            } else if (i < n) {
+                // Single token, TeX style.
+                arg = QString(tex.at(i)).toHtmlEscaped();
+                ++i;
+            }
+            out += QStringLiteral("<%1>%2</%1>")
+                       .arg(c == QLatin1Char('^') ? QStringLiteral("sup")
+                                                   : QStringLiteral("sub"),
+                            arg);
+            continue;
+        }
+        const int before = i;
+        QString plain;
+        out += texParseAtom(tex, i, &plain);
+        if (i == before) { // safety against endless loops
+            out += QString(c).toHtmlEscaped();
+            ++i;
+        }
+    }
+    return out;
+}
+
+static QString texParseAtom(const QString &tex, int &i, QString *srcPlain)
+{
+    const int n = tex.size();
+    if (srcPlain)
+        srcPlain->clear();
+    if (i >= n)
+        return QString();
+
+    const QChar c = tex.at(i);
+
+    if (c == QLatin1Char('{')) {
+        ++i; // consume '{'; the group body starts here
+        const int start = i;
+        const QString body = texParseSeq(tex, i, QChar('}'));
+        if (i < n && tex.at(i) == QLatin1Char('}'))
+            ++i;
+        if (srcPlain)
+            *srcPlain = tex.mid(start, qMax(0, i - start - 1));
+        return body;
+    }
+    if (c == QLatin1Char('\\')) {
+        ++i;
+        if (i >= n)
+            return QLatin1String("\\");
+        const QChar c2 = tex.at(i);
+        if (c2 == QLatin1Char('{') || c2 == QLatin1Char('}')
+            || c2 == QLatin1Char('|')) {
+            ++i;
+            if (srcPlain)
+                *srcPlain = QString(c2);
+            return QString(c2);
+        }
+        if (c2 == QLatin1Char('\\')) {
+            ++i;
+            return QStringLiteral("<br>");
+        }
+        if (c2 == QLatin1Char(' ') || c2 == QLatin1Char(';')
+            || c2 == QLatin1Char(':') || c2 == QLatin1Char(',')) {
+            ++i;
+            return QStringLiteral(" ");
+        }
+        if (c2 == QLatin1Char('!')) {
+            ++i;
+            return QString();
+        }
+        if (!c2.isLetter()) {
+            ++i;
+            if (srcPlain)
+                *srcPlain = QString(c2);
+            return QString(c2).toHtmlEscaped();
+        }
+        int j = i;
+        while (j < n && tex.at(j).isLetter())
+            ++j;
+        const QString cmd = tex.mid(i, j - i);
+        i = j;
+
+        // Fractions: \frac{a}{b} (and \dfrac, \tfrac)
+        if (cmd == QLatin1String("frac") || cmd == QLatin1String("dfrac")
+            || cmd == QLatin1String("tfrac")) {
+            if (i < n && tex.at(i) == QLatin1Char('{')) {
+                QString srcA, srcB;
+                const QString a = texParseAtom(tex, i, &srcA);
+                if (i < n && tex.at(i) == QLatin1Char('{')) {
+                    const QString b = texParseAtom(tex, i, &srcB);
+                    const bool wa = srcA.trimmed().size() > 1;
+                    const bool wb = srcB.trimmed().size() > 1;
+                    return (wa ? QStringLiteral("(") : QString()) + a
+                         + (wa ? QStringLiteral(")") : QString())
+                         + QStringLiteral("\u2044")
+                         + (wb ? QStringLiteral("(") : QString()) + b
+                         + (wb ? QStringLiteral(")") : QString());
+                }
+                return a;
+            }
+            return QString();
+        }
+        // Root: \sqrt[n]{x}
+        if (cmd == QLatin1String("sqrt")) {
+            QString idx;
+            if (i < n && tex.at(i) == QLatin1Char('[')) {
+                const int close = tex.indexOf(QLatin1Char(']'), i);
+                if (close > i) {
+                    idx = tex.mid(i + 1, close - i - 1);
+                    i = close + 1;
+                }
+            }
+            if (i < n && tex.at(i) == QLatin1Char('{')) {
+                QString srcX;
+                const QString x = texParseAtom(tex, i, &srcX);
+                const bool w = srcX.trimmed().size() > 1;
+                const QString sup = idx.isEmpty()
+                    ? QString()
+                    : QStringLiteral("<sup>%1</sup>")
+                          .arg(QString(idx).toHtmlEscaped());
+                return sup + QStringLiteral("\u221a")
+                     + (w ? QStringLiteral("(") : QString()) + x
+                     + (w ? QStringLiteral(")") : QString());
+            }
+            return QStringLiteral("\u221a");
+        }
+        // Upright plain text
+        if (cmd == QLatin1String("text") || cmd == QLatin1String("textrm")
+            || cmd == QLatin1String("mathrm")) {
+            if (i < n && tex.at(i) == QLatin1Char('{')) {
+                int depth = 0, close = -1;
+                for (int k = i; k < n; ++k) {
+                    if (tex.at(k) == QLatin1Char('{'))
+                        ++depth;
+                    else if (tex.at(k) == QLatin1Char('}')) {
+                        --depth;
+                        if (depth == 0) { close = k; break; }
+                    }
+                }
+                if (close > i) {
+                    const QString raw = tex.mid(i + 1, close - i - 1);
+                    i = close + 1;
+                    return QStringLiteral(
+                               "<span style=\"font-style:normal\">%1</span>")
+                        .arg(raw.toHtmlEscaped());
+                }
+            }
+            return QString();
+        }
+        if (cmd == QLatin1String("mathbf") || cmd == QLatin1String("bm")
+            || cmd == QLatin1String("boldsymbol")) {
+            if (i < n && tex.at(i) == QLatin1Char('{')) {
+                QString plain;
+                const QString body = texParseAtom(tex, i, &plain);
+                return QStringLiteral("<b>%1</b>").arg(body);
+            }
+            return QString();
+        }
+        if (cmd == QLatin1String("mathbb")) {
+            if (i < n && tex.at(i) == QLatin1Char('{')) {
+                int depth = 0, close = -1;
+                for (int k = i; k < n; ++k) {
+                    if (tex.at(k) == QLatin1Char('{'))
+                        ++depth;
+                    else if (tex.at(k) == QLatin1Char('}')) {
+                        --depth;
+                        if (depth == 0) { close = k; break; }
+                    }
+                }
+                if (close > i) {
+                    const QString body = tex.mid(i + 1, close - i - 1);
+                    i = close + 1;
+                    static const struct { ushort ch; uint sym; } BB[] = {
+                        {'C', 0x2102}, {'H', 0x210d}, {'N', 0x2115},
+                        {'P', 0x2119}, {'Q', 0x211a}, {'R', 0x211d},
+                        {'Z', 0x2124},
+                    };
+                    QString out;
+                    for (const QChar &ch : body) {
+                        bool mapped = false;
+                        for (const auto &e : BB) {
+                            if (ch.unicode() == e.ch) {
+                                out += QString(QChar(e.sym));
+                                mapped = true;
+                                break;
+                            }
+                        }
+                        if (!mapped)
+                            out += ch;
+                    }
+                    return out;
+                }
+            }
+            return QString();
+        }
+        // Layout noise that is consumed silently
+        if (cmd == QLatin1String("left") || cmd == QLatin1String("right")
+            || cmd == QLatin1String("big") || cmd == QLatin1String("Big")
+            || cmd == QLatin1String("bigg") || cmd == QLatin1String("Bigg")
+            || cmd == QLatin1String("bigl") || cmd == QLatin1String("bigr")
+            || cmd == QLatin1String("Bigl") || cmd == QLatin1String("Bigr")
+            || cmd == QLatin1String("bigm") || cmd == QLatin1String("limits")
+            || cmd == QLatin1String("nolimits")
+            || cmd == QLatin1String("displaystyle"))
+            return QString();
+        if (cmd == QLatin1String("begin") || cmd == QLatin1String("end")) {
+            if (i < n && tex.at(i) == QLatin1Char('{')) {
+                const int close = tex.indexOf(QLatin1Char('}'), i);
+                if (close > i)
+                    i = close + 1;
+            }
+            return QString();
+        }
+        if (cmd == QLatin1String("quad"))
+            return QStringLiteral("\u2003");
+        if (cmd == QLatin1String("qquad"))
+            return QStringLiteral("\u2003\u2003");
+        if (texIsFunctionName(cmd))
+            return QStringLiteral(
+                       "<span style=\"font-style:normal\">%1</span>")
+                .arg(cmd);
+        const QString sym = texSymbol(cmd);
+        if (!sym.isEmpty())
+            return sym;
+        // Unknown command: keep it visible (honest pass-through)
+        return QStringLiteral(
+                   "<span style=\"font-style:normal\">\\%1</span>")
+            .arg(cmd.toHtmlEscaped());
+    }
+    if (c == QLatin1Char('}')) {
+        ++i;
+        return QStringLiteral("}");
+    }
+    if (c == QLatin1Char('&')) {
+        ++i;
+        return QStringLiteral(" ");
+    }
+    if (c == QLatin1Char(' ')) {
+        ++i;
+        return QStringLiteral(" ");
+    }
+    if (c.isDigit()) {
+        int j = i;
+        while (j < n && (tex.at(j).isDigit()
+                         || tex.at(j) == QLatin1Char('.')
+                         || tex.at(j) == QLatin1Char(',')))
+            ++j;
+        const QString num = tex.mid(i, j - i);
+        i = j;
+        if (srcPlain)
+            *srcPlain = num;
+        return QStringLiteral("<span style=\"font-style:normal\">%1</span>")
+            .arg(num);
+    }
+    if (c.isLetter()) {
+        ++i;
+        if (srcPlain)
+            *srcPlain = QString(c);
+        return QStringLiteral("<i>%1</i>").arg(QString(c));
+    }
+    ++i;
+    if (srcPlain)
+        *srcPlain = QString(c);
+    return QString(c).toHtmlEscaped();
+}
+
+// Inline math span ($...$ / \(...\)).
+static QString mathInlineToHtml(const QString &tex)
+{
+    int i = 0;
+    return QStringLiteral("<span style=\"white-space:nowrap\">%1</span>")
+        .arg(texParseSeq(tex, i, QChar()));
+}
+
+// Display math block ($$...$$ / \[...\]): own centered paragraph.
+static QString mathDisplayToHtml(const QString &tex)
+{
+    int i = 0;
+    return QStringLiteral(
+               "<div align=\"center\" style=\"font-size:12pt\">%1</div>")
+        .arg(texParseSeq(tex, i, QChar()));
+}
+
+// Inline elements: code spans are protected by placeholders first, then
+// inline/display math is extracted, then images (rendered as a hint),
+// links, bold, italic, strikethrough. Math is rendered as styled Unicode
+// text (see the TeX subset engine above).
 static QString mdInlinePass(QString s)
 {
     QStringList codeSpans;
@@ -432,6 +1027,37 @@ static QString mdInlinePass(QString s)
                       QStringLiteral("\x01CS%1\x02").arg(codeSpans.size() - 1));
             m = re.match(s);
         }
+    }
+
+    // Math: $...$, $$...$$ (single-line display), \(...\). Escaped dollars
+    // are shielded first so "$5" prices stay untouched.
+    QStringList mathParts;
+    {
+        s.replace(QStringLiteral("\\$"), QStringLiteral("\x01Q"));
+        auto stash = [&s, &mathParts](const QRegularExpression &re,
+                                       bool display) {
+            QRegularExpressionMatch m = re.match(s);
+            for (int guard = 0; m.hasMatch() && guard < 200; ++guard) {
+                const QString body = m.captured(1);
+                mathParts.append(display ? mathDisplayToHtml(body)
+                                         : mathInlineToHtml(body));
+                s.replace(m.capturedStart(),
+                          m.capturedEnd() - m.capturedStart(),
+                          QStringLiteral("\x01MT%1\x02")
+                              .arg(mathParts.size() - 1));
+                m = re.match(s);
+            }
+        };
+        stash(QRegularExpression(
+                  QStringLiteral("\\\\\\(([^\\n]+?)\\\\\\)")), false);
+        stash(QRegularExpression(
+                  QStringLiteral("\\$\\$([^\\n]+?)\\$\\$")), true);
+        stash(QRegularExpression(
+                  QStringLiteral("\\$([^\\$\\s][^\\$\\n]*?[^\\$\\s])\\$")),
+              false);
+        stash(QRegularExpression(
+                  QStringLiteral("\\$([^\\$\\s])\\$")), false);
+        s.replace(QStringLiteral("\x01Q"), QStringLiteral("$"));
     }
 
     s = mdEscape(s);
@@ -464,6 +1090,8 @@ static QString mdInlinePass(QString s)
     s.replace(QRegularExpression(QStringLiteral("~~(.+?)~~")),
               QStringLiteral("<s>\\1</s>"));
 
+    for (int i = 0; i < mathParts.size(); ++i)
+        s.replace(QStringLiteral("\x01MT%1\x02").arg(i), mathParts.at(i));
     for (int i = 0; i < codeSpans.size(); ++i)
         s.replace(QStringLiteral("\x01CS%1\x02").arg(i),
                   QStringLiteral("<code>%1</code>").arg(codeSpans.at(i)));
@@ -472,7 +1100,10 @@ static QString mdInlinePass(QString s)
     return s;
 }
 
-static QString markdownToHtml(const QString &md)
+static QString markdownToHtml(const QString &md,
+                              QList<RunBlock> *blocks = nullptr,
+                              const QHash<QString, QString> *results = nullptr,
+                              const QString &runningKey = QString())
 {
     QStringList lines;
     for (const QString &raw : md.split(QLatin1Char('\n'))) {
@@ -487,9 +1118,15 @@ static QString markdownToHtml(const QString &md)
     QStringList quoteLines;
     QStringList tbl;
     QString codeBuf;
+    QString codeLang;      // normalized run language of the open fence
+    QString codeLabel;     // fence info string shown in the run bar
+    QString mathBuf;
     bool inUl = false;
     bool inOl = false;
     bool inCode = false;
+    bool inMathF = false;  // ```math fence
+    bool inMathD = false;  // $$ ... $$ block
+    bool inMathB = false;  // \[ ... \] block
 
     auto flushPara = [&]() {
         if (!para.isEmpty()) {
@@ -504,15 +1141,74 @@ static QString markdownToHtml(const QString &md)
     auto flushQuote = [&]() {
         if (!quoteLines.isEmpty()) {
             out += QStringLiteral("<blockquote>%1</blockquote>\n")
-                       .arg(markdownToHtml(quoteLines.join(QLatin1Char('\n'))));
+                       .arg(markdownToHtml(quoteLines.join(QLatin1Char('\n')),
+                                           nullptr));
             quoteLines.clear();
         }
     };
     auto flushCode = [&]() {
         if (!codeBuf.isEmpty() || inCode) {
-            out += QStringLiteral("<pre><code>%1</code></pre>\n").arg(codeBuf);
+            const QString lang = codeLang;
+            const QString label = codeLabel;
+            const bool runnable = !lang.isEmpty();
+            const QString key = runBlockKey(lang, codeBuf);
+            int id = -1;
+            if (blocks && runnable) {
+                RunBlock rb;
+                rb.lang = lang;
+                rb.code = codeBuf;
+                blocks->append(rb);
+                id = blocks->size() - 1;
+            }
+            if (blocks && runnable) {
+                const bool running = (key == runningKey);
+                const QString res = results ? results->value(key) : QString();
+                out += QStringLiteral(
+                           "<table width=\"100%%\" cellspacing=\"0\" "
+                           "cellpadding=\"4\" bgcolor=\"%1\">"
+                           "<tr><td align=\"left\">"
+                           "<font color=\"%2\" style=\"font-size:9pt\">"
+                           "<b>%3</b></font></td>"
+                           "<td align=\"right\">"
+                           "%4</td></tr></table>\n")
+                           .arg(mdBarBg(), mdBarFg())
+                           .arg(label.isEmpty() ? runLanguageLabel(lang)
+                                                : label.toHtmlEscaped())
+                           .arg(running
+                                    ? QStringLiteral(
+                                          "<font color=\"%1\" "
+                                          "style=\"font-size:9pt\">"
+                                          "wird ausgef\u00fchrt \u2026</font>")
+                                          .arg(mdAccent())
+                                    : QStringLiteral(
+                                          "<a href=\"npplxrun:%1\" "
+                                          "style=\"font-size:9pt\">"
+                                          "\u25b6 Ausf\u00fchren</a>")
+                                          .arg(id));
+                if (!res.isEmpty()) {
+                    out += QStringLiteral(
+                               "<table width=\"100%%\" cellspacing=\"0\" "
+                               "cellpadding=\"4\" bgcolor=\"%1\"><tr><td>")
+                               .arg(mdBarBg())
+                           + QStringLiteral(
+                                 "<font color=\"%1\" style=\"font-size:9pt\">"
+                                 "<b>%2</b></font></td></tr>"
+                                 "<tr><td><pre style=\"font-size:9pt\">"
+                                 "%3</pre></td></tr></table>\n")
+                                 .arg(mdOutHead())
+                                 .arg(QStringLiteral("Ergebnis"))
+                                 .arg(mdEscape(res));
+                }
+                out += QStringLiteral("<pre><code>%1</code></pre>\n")
+                           .arg(codeBuf);
+            } else {
+                out += QStringLiteral("<pre><code>%1</code></pre>\n")
+                           .arg(codeBuf);
+            }
             codeBuf.clear();
             inCode = false;
+            codeLang.clear();
+            codeLabel.clear();
         }
     };
     auto flushTable = [&]() {
@@ -545,6 +1241,15 @@ static QString markdownToHtml(const QString &md)
         flushQuote();
         flushTable();
     };
+    auto flushMath = [&]() {
+        if (inMathF || inMathD || inMathB) {
+            if (out.endsWith(QLatin1String("<br>")))
+                out.chop(4);
+            out += mathDisplayToHtml(mathBuf);
+            mathBuf.clear();
+            inMathF = inMathD = inMathB = false;
+        }
+    };
 
     static const QRegularExpression headingRe(
         QStringLiteral("^\\s{0,3}(#{1,6})\\s+(.*\\S)\\s*#*$"));
@@ -563,10 +1268,49 @@ static QString markdownToHtml(const QString &md)
 
     for (int i = 0; i < lines.size(); ++i) {
         const QString ln = lines.at(i);
+        const bool isFence = ln.startsWith(QLatin1String("```"))
+                             || ln.startsWith(QLatin1String("~~~"));
 
+        // --- open display-math states -------------------------------
+        if (!inCode && !inMathF && !inMathD && !inMathB && isFence
+            && ln.mid(3).trimmed().startsWith(QLatin1String("math"))) {
+            flushAll();
+            inMathF = true;
+            continue;
+        }
+        if (!inMathF && !inMathB && !inCode && ln.trimmed() == QLatin1String("$$")) {
+            if (inMathD) {
+                flushMath();
+            } else {
+                flushAll();
+                inMathD = true;
+            }
+            continue;
+        }
+        if (!inMathF && !inMathD && !inCode
+            && ln.trimmed() == QLatin1String("\\[")) {
+            flushAll();
+            inMathB = true;
+            continue;
+        }
+        if (inMathB && ln.trimmed() == QLatin1String("\\]")) {
+            flushMath();
+            continue;
+        }
+        if (inMathF || inMathD || inMathB) {
+            if (inMathF && isFence) {
+                flushMath();
+            } else {
+                if (!mathBuf.isEmpty())
+                    mathBuf += QLatin1Char('\n');
+                mathBuf += ln;
+            }
+            continue;
+        }
+
+        // --- fenced code ---------------------------------------------
         if (inCode) {
-            if (ln.startsWith(QLatin1String("```"))
-                || ln.startsWith(QLatin1String("~~~"))) {
+            if (isFence) {
                 flushCode();
             } else {
                 if (!codeBuf.isEmpty())
@@ -575,10 +1319,11 @@ static QString markdownToHtml(const QString &md)
             }
             continue;
         }
-        if (ln.startsWith(QLatin1String("```"))
-            || ln.startsWith(QLatin1String("~~~"))) {
+        if (isFence) {
             flushAll();
             inCode = true;
+            codeLabel = ln.mid(3).trimmed();
+            codeLang = normalizeRunLang(codeLabel);
             continue;
         }
 
@@ -676,24 +1421,44 @@ static QString markdownToHtml(const QString &md)
         para += ln;
     }
 
+    flushMath();
     flushCode();
     flushAll();
     return out;
 }
 
-static QString mdCss()
+static QString mdCss(bool dark)
 {
+    if (dark) {
+        return QStringLiteral(
+            "body { font-family: sans-serif; color: #c9d2dc; }\n"
+            "h1 { font-size: 22pt; font-weight: bold; color: #e4e9ef; }\n"
+            "h2 { font-size: 18pt; font-weight: bold; color: #e4e9ef; }\n"
+            "h3 { font-size: 15pt; font-weight: bold; color: #dfe5ec; }\n"
+            "h4 { font-size: 13pt; font-weight: bold; color: #dfe5ec; }\n"
+            "h5 { font-size: 12pt; font-weight: bold; }\n"
+            "h6 { font-size: 11pt; font-weight: bold; }\n"
+            "code { font-family: monospace; background-color: #1c222c; }\n"
+            "pre { font-family: monospace; background-color: #151a22; }\n"
+            "blockquote { color: #8a94a2; }\n"
+            "a { color: #6fb3e0; }\n"
+            "hr { color: #2b333d; }\n"
+            "th { background-color: #1e2630; color: #e4e9ef; }\n");
+    }
     return QStringLiteral(
-        "h1 { font-size: 22pt; font-weight: bold; }\n"
-        "h2 { font-size: 18pt; font-weight: bold; }\n"
-        "h3 { font-size: 15pt; font-weight: bold; }\n"
+        "body { font-family: sans-serif; color: #2a2f36; }\n"
+        "h1 { font-size: 22pt; font-weight: bold; color: #1c2127; }\n"
+        "h2 { font-size: 18pt; font-weight: bold; color: #1c2127; }\n"
+        "h3 { font-size: 15pt; font-weight: bold; color: #333b44; }\n"
         "h4 { font-size: 13pt; font-weight: bold; }\n"
         "h5 { font-size: 12pt; font-weight: bold; }\n"
         "h6 { font-size: 11pt; font-weight: bold; }\n"
-        "code { font-family: monospace; }\n"
-        "pre { font-family: monospace; }\n"
-        "blockquote { color: #555555; }\n"
-        "th { background-color: #efefef; }\n");
+        "code { font-family: monospace; background-color: #eeeae0; }\n"
+        "pre { font-family: monospace; background-color: #f3f0e9; }\n"
+        "blockquote { color: #6b675f; }\n"
+        "a { color: #1163a6; }\n"
+        "hr { color: #d8d3c8; }\n"
+        "th { background-color: #efece5; color: #2a2f36; }\n");
 }
 
 static QString plainTextHtml(const QString &text)
@@ -767,7 +1532,7 @@ static int convertToPdfCli(const QString &inPath, const QString &outPath,
     QString css;
     if (isMd) {
         html = markdownToHtml(text);
-        css = mdCss();
+        css = mdCss(false);
     } else {
         html = plainTextHtml(text);
         css = QStringLiteral("pre { font-family: monospace; font-size: 10pt; }");
@@ -826,8 +1591,7 @@ public:
         }
 
         font.setFamily(resolveMonoFamily());
-        if (dark)
-            QApplication::setPalette(darkPalette());
+        setTheme(dark);
 
         const QByteArray geo = settings.value(
             QStringLiteral("window/geometry")).toByteArray();
@@ -871,6 +1635,12 @@ public:
     QTreeWidget *resultsTree = nullptr;
     QLabel *resultsHeader = nullptr;
     QAction *actMdDock = nullptr;
+    QList<RunBlock> mdRunBlocks;
+    QHash<QString, QString> runResults;
+    QString runKeyRunning;
+    RunJob *runJob = nullptr;
+    QList<QAction *> themeMenuActs;
+    QAction *actThemeToggle = nullptr;
 
     // ----------------------------------------------------------------- Access
 
@@ -918,15 +1688,15 @@ public:
 
     void applyColors(Editor *ed)
     {
-        const QColor paper   = dark ? QColor("#1e1e1e") : QColor("#ffffff");
-        const QColor def     = dark ? QColor("#d4d4d4") : QColor("#000000");
-        const QColor caret   = dark ? QColor("#dcdcdc") : QColor("#000000");
-        const QColor caretln = dark ? QColor("#2a2d2e") : QColor("#f0f0f0");
-        const QColor selBg   = dark ? QColor("#264f78") : QColor("#3399ff");
-        const QColor selFg   = QColor("#ffffff");
-        const QColor edge    = dark ? QColor("#3c3c3c") : QColor("#d0d0d0");
-        const QColor foldFg  = dark ? QColor("#858585") : QColor("#666666");
-        const QColor foldBg  = dark ? QColor("#252526") : QColor("#f0f0f0");
+        const QColor paper   = dark ? QColor("#10151b") : QColor("#fbfaf7");
+        const QColor def     = dark ? QColor("#c9d2dc") : QColor("#2a2f36");
+        const QColor caret   = dark ? QColor("#ffb454") : QColor("#a35412");
+        const QColor caretln = dark ? QColor("#1a2028") : QColor("#f0eee8");
+        const QColor selBg   = dark ? QColor("#2a4a66") : QColor("#b3d4f5");
+        const QColor selFg   = dark ? QColor("#ffffff") : QColor("#14212e");
+        const QColor edge    = dark ? QColor("#2b333d") : QColor("#d8d3c8");
+        const QColor foldFg  = dark ? QColor("#8a94a2") : QColor("#96917f");
+        const QColor foldBg  = dark ? QColor("#1c222b") : QColor("#f3f0e9");
 
         ed->setPaper(paper);
         ed->setColor(def);
@@ -1212,29 +1982,26 @@ public:
     void setTheme(bool darkTheme)
     {
         dark = darkTheme;
-        QApplication::setPalette(
-            darkTheme ? darkPalette()
-                      : QApplication::style()->standardPalette());
+        setPreviewDark(darkTheme);
+        const QPalette pal = studioPalette(darkTheme);
+        QApplication::setPalette(pal);
+        for (QWidget *w : QApplication::allWidgets())
+            w->setPalette(pal);
+        qApp->setStyleSheet(appStyleSheet(darkTheme));
+        for (QAction *a : themeMenuActs)
+            a->setChecked(a->property("themeDark").toBool() == darkTheme);
+        if (actThemeToggle) {
+            const QSignalBlocker guard(actThemeToggle);
+            actThemeToggle->setChecked(darkTheme);
+            actThemeToggle->setText(darkTheme
+                                        ? QStringLiteral("Hell")
+                                        : QStringLiteral("Dunkel"));
+        }
         for (Editor *ed : editors)
             applyColors(ed);
+        if (mdView && dockMd && dockMd->isVisible())
+            renderMd();
         updateStatus();
-    }
-
-    QPalette darkPalette() const
-    {
-        QPalette pal;
-        const QColor window("#1e1e1e"), text("#d4d4d4");
-        pal.setColor(QPalette::Window, window);
-        pal.setColor(QPalette::WindowText, text);
-        pal.setColor(QPalette::Base, window);
-        pal.setColor(QPalette::Text, text);
-        pal.setColor(QPalette::Button, QColor("#333333"));
-        pal.setColor(QPalette::ButtonText, text);
-        pal.setColor(QPalette::Highlight, QColor("#264f78"));
-        pal.setColor(QPalette::HighlightedText, QColor("#ffffff"));
-        pal.setColor(QPalette::ToolTipBase, QColor("#2d2d2d"));
-        pal.setColor(QPalette::ToolTipText, text);
-        return pal;
     }
 
     // --------------------------------------------- Recently opened
@@ -1405,7 +2172,9 @@ protected:
         vbox->addWidget(headBar);
 
         mdView = new QTextBrowser(dockBody);
-        mdView->setOpenExternalLinks(true);
+        mdView->setOpenExternalLinks(false);
+        connect(mdView, &QTextBrowser::anchorClicked, this,
+                &MainWindow::onMdAnchor);
         vbox->addWidget(mdView);
 
         dockMd = new QDockWidget(QStringLiteral("Markdown-Ansicht"), this);
@@ -1484,7 +2253,7 @@ protected:
             return;
         }
         if (ed->lang != QLatin1String("Markdown")) {
-            mdView->document()->setDefaultStyleSheet(mdCss());
+            mdView->document()->setDefaultStyleSheet(mdCss(dark));
             mdView->setHtml(QStringLiteral(
                 "<p>Die Markdown-Vorschau rendert das aktive Markdown-"
                 "Dokument live mit.</p>"
@@ -1492,8 +2261,10 @@ protected:
                 "oeffnen oder Sprache per Ansicht setzen.</p>"));
             return;
         }
-        mdView->document()->setDefaultStyleSheet(mdCss());
-        mdView->setHtml(markdownToHtml(ed->text()));
+        mdView->document()->setDefaultStyleSheet(mdCss(dark));
+        mdRunBlocks.clear();
+        mdView->setHtml(markdownToHtml(ed->text(), &mdRunBlocks,
+                                       &runResults, runKeyRunning));
     }
 
     void syncMdDock()
@@ -1511,6 +2282,276 @@ protected:
         }
         renderMd();
     }
+
+    // --------------------------------------------- Code-block execution
+    // Executes ```c / ```cpp / ```python / ```sql blocks shown in the
+    // Markdown preview. Security posture: explicit user click only,
+    // absolute program paths from the settings (no PATH lookup, no shell),
+    // processes run with a 10 s kill timer and a 100 KB output cap, all
+    // temporary files live in a private QTemporaryDir (0700) that is
+    // removed afterwards.
+
+    void onMdAnchor(const QUrl &url)
+    {
+        const QString s = url.toString();
+        static const QString scheme = QStringLiteral("npplxrun:");
+        if (s.startsWith(scheme)) {
+            bool ok = false;
+            const int id = s.mid(scheme.size()).toInt(&ok);
+            if (ok)
+                runCodeBlock(id);
+            return;
+        }
+        if (url.scheme() == QLatin1String("http")
+            || url.scheme() == QLatin1String("https"))
+            QDesktopServices::openUrl(url);
+    }
+
+    void showExecDialog()
+    {
+        QDialog dlg(this);
+        dlg.setWindowTitle(
+            QStringLiteral("Werkzeuge für Code-Ausführung"));
+        auto *grid = new QGridLayout(&dlg);
+        const QVector<QPair<QString, QPair<QString, QString>>> rows = {
+            {QStringLiteral("exec/gcc"),
+             {QStringLiteral("C-Compiler (gcc):"), QStringLiteral("c")}},
+            {QStringLiteral("exec/gxx"),
+             {QStringLiteral("C++-Compiler (g++):"), QStringLiteral("cpp")}},
+            {QStringLiteral("exec/python"),
+             {QStringLiteral("Python-Interpreter:"), QStringLiteral("python")}},
+            {QStringLiteral("exec/sqlite"),
+             {QStringLiteral("SQLite-Kommandozeile:"), QStringLiteral("sql")}},
+        };
+        QVector<QLineEdit *> edits;
+        for (int r = 0; r < rows.size(); ++r) {
+            grid->addWidget(new QLabel(rows.at(r).second.first, &dlg), r, 0);
+            auto *le = new QLineEdit(&dlg);
+            le->setText(settings.value(rows.at(r).first,
+                                       defaultExecutor(rows.at(r).second.second))
+                            .toString());
+            edits.append(le);
+            grid->addWidget(le, r, 1);
+            auto *btn = new QPushButton(QStringLiteral("…"), &dlg);
+            const QString cfgKey = rows.at(r).first;
+            const QString lang = rows.at(r).second.second;
+            connect(btn, &QPushButton::clicked, this,
+                    [this, &dlg, le, cfgKey, lang] {
+                        const QString cur = le->text().isEmpty()
+                                                ? defaultExecutor(lang)
+                                                : le->text();
+                        const QString sel = QFileDialog::getOpenFileName(
+                            &dlg, QStringLiteral("Werkzeug auswählen"), cur);
+                        if (!sel.isEmpty())
+                            le->setText(sel);
+                    });
+            grid->addWidget(btn, r, 2);
+        }
+        auto *box = new QDialogButtonBox(QDialogButtonBox::Ok
+                                         | QDialogButtonBox::Cancel, &dlg);
+        connect(box, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(box, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+        grid->addWidget(box, rows.size(), 0, 1, 3);
+        dlg.resize(560, 220);
+        if (dlg.exec() == QDialog::Accepted) {
+            for (int r = 0; r < rows.size(); ++r)
+                settings.setValue(rows.at(r).first,
+                                  edits.at(r)->text().trimmed());
+            statusBar()->showMessage(
+                QStringLiteral("Werkzeuge gespeichert."), 4000);
+        }
+    }
+
+    void appendRunOutput(const QString &chunk)
+    {
+        if (!runJob)
+            return;
+        if (runJob->capped)
+            return;
+        runJob->output += chunk;
+        if (runJob->output.size() > 100000) {
+            runJob->output = runJob->output.left(100000);
+            runJob->output += QStringLiteral("\n(Ausgabe gekürzt)");
+            runJob->capped = true;
+        }
+    }
+
+    void cleanupRunJob()
+    {
+        if (!runJob)
+            return;
+        if (runJob->killer) {
+            runJob->killer->stop();
+            runJob->killer->deleteLater();
+        }
+        if (runJob->proc)
+            runJob->proc->deleteLater();
+        delete runJob->dir; // removes the whole temporary tree
+        delete runJob;
+        runJob = nullptr;
+    }
+
+    void finishRun(int exitCode, const QString &phase)
+    {
+        if (!runJob)
+            return;
+        const qint64 ms = runJob->clock.elapsed();
+        const QString res = formatRunResult(exitCode, runJob->output, ms,
+                                            runJob->timedOut, phase);
+        const QString key = runJob->key;
+        runKeyRunning.clear();
+        cleanupRunJob();
+        runResults.insert(key, res);
+        renderMd();
+        statusBar()->showMessage(
+            QStringLiteral("Ausführung beendet."), 4000);
+    }
+
+    void onRunPhaseFinished(int exitCode)
+    {
+        if (!runJob || !runJob->proc)
+            return;
+        appendRunOutput(QString::fromUtf8(runJob->proc->readAllStandardOutput()));
+        if (runJob->phase == 0) { // compile step finished
+            if (exitCode == 0 && QFile::exists(runJob->binPath)) {
+                runJob->phase = 1;
+                runJob->clock.restart();
+                runJob->proc->start(runJob->binPath, QStringList());
+                return;
+            }
+            finishRun(exitCode, QStringLiteral("Compiler"));
+            return;
+        }
+        finishRun(exitCode, QString());
+    }
+
+    void runCodeBlock(int idx)
+    {
+        if (idx < 0 || idx >= mdRunBlocks.size())
+            return;
+        if (runJob) {
+            statusBar()->showMessage(
+                QStringLiteral("Es läuft bereits eine Ausführung."), 4000);
+            return;
+        }
+        const RunBlock rb = mdRunBlocks.at(idx);
+        const QString key = runBlockKey(rb.lang, rb.code);
+        QString cfgKey = QStringLiteral("exec/gcc");
+        if (rb.lang == QLatin1String("cpp"))
+            cfgKey = QStringLiteral("exec/gxx");
+        else if (rb.lang == QLatin1String("python"))
+            cfgKey = QStringLiteral("exec/python");
+        else if (rb.lang == QLatin1String("sql"))
+            cfgKey = QStringLiteral("exec/sqlite");
+        QString prog = settings.value(cfgKey,
+                                      defaultExecutor(rb.lang)).toString();
+        if (prog.isEmpty())
+            prog = defaultExecutor(rb.lang);
+        if (!QFileInfo::exists(prog)) {
+            QMessageBox::warning(
+                this, QStringLiteral("Code-Ausführung"),
+                QStringLiteral("Werkzeug nicht gefunden:\n%1\n\nBitte "
+                               "unter Extras → Werkzeuge für "
+                               "Code-Ausführung einen gültigen "
+                               "Programmpfad eintragen.").arg(prog));
+            showExecDialog();
+            return;
+        }
+
+        runJob = new RunJob;
+        runJob->dir = new QTemporaryDir;
+        const QString base = runJob->dir->path();
+        QString scriptPath;
+        if (rb.lang == QLatin1String("c"))
+            scriptPath = base + QStringLiteral("/main.c");
+        else if (rb.lang == QLatin1String("cpp"))
+            scriptPath = base + QStringLiteral("/main.cpp");
+        else if (rb.lang == QLatin1String("python"))
+            scriptPath = base + QStringLiteral("/script.py");
+        else
+            scriptPath = base + QStringLiteral("/script.sql");
+        {
+            QFile f(scriptPath);
+            if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                QMessageBox::critical(
+                    this, QStringLiteral("Code-Ausführung"),
+                    QStringLiteral("Temporäre Datei konnte nicht angelegt "
+                                   "werden."));
+                cleanupRunJob();
+                return;
+            }
+            f.write(mdUnescape(rb.code).toUtf8());
+            f.close();
+            QFile::setPermissions(scriptPath,
+                                   QFile::ReadOwner | QFile::WriteOwner);
+        }
+        Editor *ed = currentEditor();
+        const QString workDir = (ed && !ed->filepath.isEmpty())
+                                    ? QFileInfo(ed->filepath).absolutePath()
+                                    : base;
+
+        runJob->lang = rb.lang;
+        runJob->key = key;
+        runJob->binPath = base + QStringLiteral("/npplx-run.out");
+        runJob->phase = (rb.lang == QLatin1String("c")
+                         || rb.lang == QLatin1String("cpp")) ? 0 : 2;
+        runJob->proc = new QProcess(this);
+        runJob->proc->setProcessChannelMode(QProcess::MergedChannels);
+        runJob->proc->setWorkingDirectory(workDir);
+        connect(runJob->proc, &QProcess::readyReadStandardOutput, this, [this] {
+            if (runJob && runJob->proc)
+                appendRunOutput(
+                    QString::fromUtf8(runJob->proc->readAllStandardOutput()));
+        });
+        connect(runJob->proc, &QProcess::finished, this,
+                [this](int exitCode, QProcess::ExitStatus st) {
+                    Q_UNUSED(st);
+                    onRunPhaseFinished(exitCode);
+                });
+        connect(runJob->proc, &QProcess::errorOccurred, this,
+                [this](QProcess::ProcessError err) {
+                    if (!runJob)
+                        return;
+                    if (err == QProcess::FailedToStart) {
+                        appendRunOutput(QStringLiteral(
+                            "Start fehlgeschlagen: Programm konnte nicht "
+                            "gestartet werden.\n"));
+                        runJob->proc->deleteLater();
+                        runJob->proc = nullptr;
+                        finishRun(-1, QString());
+                    }
+                });
+
+        runJob->killer = new QTimer(this);
+        connect(runJob->killer, &QTimer::timeout, this, [this] {
+            if (runJob && runJob->proc) {
+                runJob->timedOut = true;
+                runJob->proc->kill();
+                appendRunOutput(QStringLiteral(
+                    "\n(Ausführung nach 10 s abgebrochen)\n"));
+                // finished() will still fire; if kill is ineffective the
+                // handler keeps the job alive until it exits.
+            }
+        });
+        runJob->killer->setSingleShot(true);
+        runJob->killer->start(10000);
+
+        runKeyRunning = key;
+        runJob->clock.start();
+        runJob->proc->start(prog,
+                            executorArgs(rb.lang, scriptPath,
+                                         runJob->binPath));
+        if (rb.lang == QLatin1String("sql")) {
+            runJob->proc->write(sqliteStdinScript(mdUnescape(rb.code)).toUtf8());
+            runJob->proc->closeWriteChannel();
+        }
+        statusBar()->showMessage(
+            QStringLiteral("Ausführung gestartet (%1) …")
+                .arg(runLanguageLabel(rb.lang)),
+            4000);
+        renderMd();
+    }
+
 
     // -------------------------------------------------------- PDF & printing
 
@@ -1542,7 +2583,7 @@ protected:
         QString css;
         if (isMd) {
             html = markdownToHtml(ed->text());
-            css = mdCss();
+            css = mdCss(false);
         } else {
             html = plainTextHtml(ed->text());
             css = QStringLiteral("pre { font-family: monospace; "
@@ -1569,7 +2610,7 @@ protected:
             return;
         const bool isMd = ed->lang == QLatin1String("Markdown");
         QTextDocument doc;
-        doc.setDefaultStyleSheet(isMd ? mdCss()
+        doc.setDefaultStyleSheet(isMd ? mdCss(false)
             : QStringLiteral("pre { font-family: monospace; "
                              "font-size: 8pt; }"));
         doc.setHtml(isMd ? markdownToHtml(ed->text())
@@ -2523,10 +3564,12 @@ private:
         for (const auto &entry : themeEntries) {
             QAction *act = themeGroup->addAction(entry.second);
             act->setCheckable(true);
+            act->setProperty("themeDark", entry.first);
             act->setChecked(dark == entry.first);
             connect(act, &QAction::triggered, this,
                     [this, isDark = entry.first]{ setTheme(isDark); });
             menuTheme->addAction(act);
+            themeMenuActs.append(act);
         }
 
         QMenu *menuLang = menuView->addMenu(QStringLiteral("Sprache"));
@@ -2612,6 +3655,12 @@ private:
         }
 
         // -- Help --------------------------------------------------------------------
+        QMenu *menuTools = bar->addMenu(QStringLiteral("Extras"));
+        QAction *actExec = menuTools->addAction(
+            QStringLiteral("Werkzeuge für Code-Ausführung …"));
+        connect(actExec, &QAction::triggered, this,
+                [this]{ showExecDialog(); });
+
         QMenu *menuHelp = bar->addMenu(QStringLiteral("Hilfe"));
         QAction *actAbout = menuHelp->addAction(QStringLiteral("Über NppLX"));
         connect(actAbout, &QAction::triggered, this, [this]{
@@ -2637,6 +3686,14 @@ private:
         toolbar->addSeparator();
         toolbar->addAction(actFind);
         toolbar->addAction(actReplace);
+        toolbar->addSeparator();
+        actThemeToggle = toolbar->addAction(dark
+                                                ? QStringLiteral("Hell")
+                                                : QStringLiteral("Dunkel"));
+        actThemeToggle->setCheckable(true);
+        actThemeToggle->setChecked(dark);
+        connect(actThemeToggle, &QAction::toggled, this,
+                [this](bool on){ setTheme(on); });
     }
 };
 

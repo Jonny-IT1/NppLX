@@ -4,3 +4,5 @@ cmake-build-*/
 *.so
 npplx
 .DS_Store
+audit/
+main_translated.cpp

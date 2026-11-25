@@ -16,9 +16,17 @@ Following the original, NppLX consists of two building blocks:
 - Editing component: Scintilla, bound through QScintilla (the same engine the original uses)
 - UI framework: Qt Widgets (replacing the original's Win32 framework)
 
-## Screenshot
+## Screenshots
 
-![NppLX with an open Markdown file](assets/screenshot.png)
+Dark and light theme, both with the live Markdown preview (F9) showing
+inline math and a runnable code block:
+
+![NppLX, dark theme, Markdown preview](assets/screenshot.png)
+
+![NppLX, light theme, Markdown preview](assets/screenshot-light.png)
+
+The toolbar button "Dunkel"/"Hell" switches themes at any time
+(also via Ansicht -> Design); the choice persists across sessions.
 
 ## Features
 
@@ -35,7 +43,7 @@ Following the original, NppLX consists of two building blocks:
   Lua, Ruby, Pascal, Diff)
 - Line numbers, code folding, bracket matching, auto-completion
 - Live Markdown preview (F9): renders headings, lists, tables, code blocks,
-  quotes, links and emphasis while you type
+  quotes, links, emphasis and inline math while you type
 - PDF export: File -> "Export as PDF ..." or from the header bar of the
   Markdown view; Markdown is rendered, other files are exported as plain text;
   print output supported as well (Ctrl+P)
@@ -56,7 +64,8 @@ npplx --to-pdf notes.txt letter.pdf --plain   # always plain text
 - Document statistics (lines, words, characters, selection)
 - Line-ending detection and conversion (Unix/Windows/Mac)
 - UTF-8/ANSI (Latin-1) encoding with automatic fallback detection
-- Light and dark themes, zoom, status bar
+- Light and dark themes (one-click toggle in the toolbar, design menu,
+  persisted across sessions), zoom, status bar
 - Fullscreen (F11) and always-on-top (F12)
 
 ## Requirements
@@ -72,7 +81,7 @@ Download the `npplx_X.Y.Z-1_amd64.deb` from the
 [releases page](https://github.com/Jonny-IT1/NppLX/releases) and install it:
 
 ```
-sudo apt install ./npplx_1.1.1-1_amd64.deb
+sudo apt install ./npplx_1.2.0-1_amd64.deb
 ```
 
 Requires Qt >= 6.8 from your distribution's repositories.
@@ -150,18 +159,59 @@ npplx --to-pdf <input-file> [output-file] [--plain]
 - Exit codes: 0 on success, 2 when no input file is given,
   1 on read or write errors.
 
+## Inline math in Markdown
+
+The preview and the PDF export render a practical TeX subset without any
+external tools. Recognized delimiters: `$...$` (inline),
+`$$...$$`, `\(...\)` and `\[...\]` (display)
+as well as ```` ```math``` ```` fenced blocks.
+
+Supported: Greek letters, operators and relations (`\pm`,
+`\times`, `\leq`, `\neq`, `\approx`, ...),
+fractions (`\frac`, `\tfrac`), roots with indices
+(`\sqrt[3]{x}`), sub-/superscripts (including control words such
+as `x^\infty`), `\mathbb`/`\mathbf`/`\text`,
+sums, integrals and products with limits, primes and spacing commands;
+unknown macros stay visible as plain text. HTML characters inside math
+are escaped; a literal dollar sign is written as `\$`.
+
+## Running code blocks in Markdown
+
+Code fences labeled `python`, `c`, `cpp`, `sql` or
+`sqlite` can be executed directly from the preview:
+
+- python: the block runs with the configured Python interpreter
+- c / cpp: the block is compiled with gcc / g++ into a fresh temporary
+  directory and the resulting binary is executed
+- sql / sqlite: the block is fed to sqlite3 with `.headers on`
+  and `.mode column`
+
+Execution is strictly opt-in: a run control appears only for supported
+languages inside the preview, and nothing runs without an explicit
+click. Program paths are absolute and configurable
+(Extras -> "Werkzeuge für Code-Ausführung ..."); defaults are
+/usr/bin/python3, /usr/bin/gcc, /usr/bin/g++ and /usr/bin/sqlite3.
+Every process gets a fresh temporary directory, a 10 second timeout
+and a 100 KB output cap; no shell is involved at any point, so there
+are no shell escapes. Run controls never appear in exported PDFs.
+
 ## Testing
 
 Each release is validated with an independent, evidence-based test pass:
 
-- 1042 unit-level checks against the unmodified `main.cpp`
+- 1368 unit-level checks against the unmodified `main.cpp`
   (every functional group covered with more than 100 checks: static HTML
-  primitives, Markdown renderer, PDF writer, line operations, case conversion,
-  comments, bookmarks, search, statistics, GUI/tab management)
-- A 316-case command-line corpus (65 Markdown and 15 plain-text conversions,
-  7 error cases, boundary cases including a 2 MB file, binary input,
+  primitives, Markdown renderer including the complete inline-TeX engine,
+  code execution with real end-to-end runs of python, C, C++ and SQL blocks,
+  PDF writer, line operations, case conversion, comments, bookmarks,
+  search, statistics, GUI/tab management)
+- A 316-case command-line corpus (Markdown and plain-text conversions,
+  error cases, boundary cases including a 2 MB file, binary input,
   Latin-1, BOM and multi-page PDFs; every produced PDF verified with
-  qpdf --check and content spot checks)
+  qpdf --check and content spot checks) plus a 113-case corpus for the
+  math and code-fence features (glyph-level assertions in the extracted
+  text, brace regressions with timeout guards, escaped-dollar checks,
+  verification that run controls never leak into paper PDFs)
 - GUI smoke test under Xvfb with window title verification and screenshot
 
 ## Third-party components
