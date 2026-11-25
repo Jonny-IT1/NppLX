@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=NppLX
+GenericName=Text Editor
+Comment=Tabbed text editor in the style of Notepad++ (C++/Qt6/QScintilla)
+Comment[de]=Tabbed-Texteditor im Stil von Notepad++ (C++/Qt6/QScintilla)
+Exec=npplx %F
+Icon=npplx
+Terminal=false
+Categories=TextEditor;Development;Utility;
+MimeType=text/plain;text/x-csrc;text/x-chdr;text/x-c++src;text/x-c++hdr;text/x-python;text/x-shellscript;text/x-makefile;text/markdown;application/json;application/xml;text/css;text/html;
+Keywords=editor;text;notepad;tabbed;qt;
+StartupWMClass=npplx
+StartupNotify=true
