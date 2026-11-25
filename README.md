@@ -18,8 +18,8 @@ Following the original, NppLX consists of two building blocks:
 
 ## Screenshots
 
-Dark and light theme, both with the live Markdown preview (F9) showing
-inline math and a runnable code block:
+Dark and light theme (Gruvbox-inspired studio palette), both with the
+live Markdown preview (F9) showing inline math and a runnable code block:
 
 ![NppLX, dark theme, Markdown preview](assets/screenshot.png)
 
@@ -81,7 +81,7 @@ Download the `npplx_X.Y.Z-1_amd64.deb` from the
 [releases page](https://github.com/Jonny-IT1/NppLX/releases) and install it:
 
 ```
-sudo apt install ./npplx_1.2.0-1_amd64.deb
+sudo apt install ./npplx_1.2.1-1_amd64.deb
 ```
 
 Requires Qt >= 6.8 from your distribution's repositories.

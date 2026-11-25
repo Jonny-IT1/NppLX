@@ -51,6 +51,7 @@
 #include <QTextDocument>
 #include <QTextStream>
 #include <QTimer>
+#include <QScrollBar>
 #include <QElapsedTimer>
 #include <QHash>
 #include <QProcess>
@@ -133,25 +134,26 @@ QColor roleColor(const std::string &role, bool dark)
 {
     static const std::unordered_map<std::string,
                                     std::pair<const char *, const char *>> M = {
-        {"comment",   {"#6a7482", "#808a94"}},
-        {"string",    {"#9ecb8f", "#35793d"}},
-        {"number",    {"#e6b450", "#a35412"}},
-        {"keyword",   {"#6fb3e0", "#1163a6"}},
-        {"type",      {"#d08fd6", "#8a2fbf"}},
-        {"operator",  {"#c9d2dc", "#2a2f36"}},
-        {"tag",       {"#6fb3e0", "#1163a6"}},
-        {"preproc",   {"#c79eda", "#9b2fa1"}},
-        {"decorator", {"#ffb454", "#a35412"}},
-        {"default",   {"#c9d2dc", "#2a2f36"}},
+        {"comment",   {"#928374", "#7c6f64"}},
+        {"string",    {"#b8bb26", "#797403"}},
+        {"number",    {"#d3869b", "#8f3f71"}},
+        {"keyword",   {"#fb4934", "#9d0006"}},
+        {"type",      {"#fabd2f", "#b57614"}},
+        {"operator",  {"#ebdbb2", "#3c3836"}},
+        {"tag",       {"#83a598", "#076678"}},
+        {"preproc",   {"#fe8019", "#af3a03"}},
+        {"decorator", {"#8ec07c", "#427b58"}},
+        {"default",   {"#ebdbb2", "#3c3836"}},
     };
     const auto it = M.find(role);
     if (it == M.end())
-        return QColor(dark ? "#c9d2dc" : "#2a2f36");
+        return QColor(dark ? "#ebdbb2" : "#3c3836");
     return QColor(dark ? it->second.first : it->second.second);
 }
 
-// Dark syntax accents via stable Scintilla style numbers (style numbers are
-// part of the Scintilla ABI and never change, unlike enum identifiers).
+// Syntax accent roles via stable Scintilla style numbers (style numbers are
+// part of the Scintilla ABI and never change, unlike enum identifiers); the
+// roles resolve per theme in roleColor().
 const std::unordered_map<std::string,
                         std::vector<std::pair<int, const char *>>> DarkStyles = {
     {"Python", {{1, "comment"}, {2, "number"}, {3, "string"}, {4, "string"},
@@ -438,88 +440,251 @@ static QString mdUnescape(const QString &s)
 // calm blue for links and selection.
 static QPalette studioPalette(bool darkTheme)
 {
+    // Gruvbox studio: warm dark graphite (dark) / warm paper (light), one
+    // yellow accent for caret and active tab, gruvbox blue and aqua for
+    // links and run controls. Surfaces: bg0 chrome, bg1 base, bg2 raised.
     QPalette pal;
     if (darkTheme) {
-        const QColor window("#151a21"), text("#c9d2dc");
+        const QColor window("#1d2021"), text("#ebdbb2");
         pal.setColor(QPalette::Window, window);
         pal.setColor(QPalette::WindowText, text);
-        pal.setColor(QPalette::Base, QColor("#10151b"));
-        pal.setColor(QPalette::AlternateBase, QColor("#161b23"));
+        pal.setColor(QPalette::Base, QColor("#282828"));
+        pal.setColor(QPalette::AlternateBase, QColor("#32302f"));
         pal.setColor(QPalette::Text, text);
-        pal.setColor(QPalette::Button, QColor("#232a34"));
+        pal.setColor(QPalette::Button, QColor("#32302f"));
         pal.setColor(QPalette::ButtonText, text);
-        pal.setColor(QPalette::ToolTipBase, QColor("#1c222b"));
+        pal.setColor(QPalette::ToolTipBase, QColor("#32302f"));
         pal.setColor(QPalette::ToolTipText, text);
-        pal.setColor(QPalette::Highlight, QColor("#2a4a66"));
-        pal.setColor(QPalette::HighlightedText, QColor("#ffffff"));
-        pal.setColor(QPalette::Link, QColor("#6fb3e0"));
-        pal.setColor(QPalette::LinkVisited, QColor("#6fb3e0"));
-        pal.setColor(QPalette::Disabled, QPalette::Text, QColor("#5a626c"));
+        pal.setColor(QPalette::Highlight, QColor("#504945"));
+        pal.setColor(QPalette::HighlightedText, QColor("#fbf1c7"));
+        pal.setColor(QPalette::Link, QColor("#83a598"));
+        pal.setColor(QPalette::LinkVisited, QColor("#83a598"));
+        pal.setColor(QPalette::Disabled, QPalette::Text, QColor("#665c54"));
         pal.setColor(QPalette::Disabled, QPalette::WindowText,
-                     QColor("#5a626c"));
+                     QColor("#665c54"));
         pal.setColor(QPalette::Disabled, QPalette::ButtonText,
-                     QColor("#5a626c"));
+                     QColor("#665c54"));
         return pal;
     }
-    pal.setColor(QPalette::Window, QColor("#efece5"));
-    pal.setColor(QPalette::WindowText, QColor("#2a2f36"));
-    pal.setColor(QPalette::Base, QColor("#fbfaf7"));
-    pal.setColor(QPalette::AlternateBase, QColor("#f3f0e9"));
-    pal.setColor(QPalette::Text, QColor("#2a2f36"));
-    pal.setColor(QPalette::Button, QColor("#e2ded4"));
-    pal.setColor(QPalette::ButtonText, QColor("#2a2f36"));
-    pal.setColor(QPalette::ToolTipBase, QColor("#fbfaf7"));
-    pal.setColor(QPalette::ToolTipText, QColor("#2a2f36"));
-    pal.setColor(QPalette::Highlight, QColor("#b3d4f5"));
-    pal.setColor(QPalette::HighlightedText, QColor("#14212e"));
-    pal.setColor(QPalette::Link, QColor("#1163a6"));
-    pal.setColor(QPalette::LinkVisited, QColor("#1163a6"));
-    pal.setColor(QPalette::Disabled, QPalette::Text, QColor("#9a948a"));
-    pal.setColor(QPalette::Disabled, QPalette::WindowText, QColor("#9a948a"));
-    pal.setColor(QPalette::Disabled, QPalette::ButtonText, QColor("#9a948a"));
+    pal.setColor(QPalette::Window, QColor("#f2ecdc"));
+    pal.setColor(QPalette::WindowText, QColor("#3c3836"));
+    pal.setColor(QPalette::Base, QColor("#fdfaf2"));
+    pal.setColor(QPalette::AlternateBase, QColor("#eee5cf"));
+    pal.setColor(QPalette::Text, QColor("#3c3836"));
+    pal.setColor(QPalette::Button, QColor("#eee5cf"));
+    pal.setColor(QPalette::ButtonText, QColor("#3c3836"));
+    pal.setColor(QPalette::ToolTipBase, QColor("#eee5cf"));
+    pal.setColor(QPalette::ToolTipText, QColor("#3c3836"));
+    pal.setColor(QPalette::Highlight, QColor("#d5c4a1"));
+    pal.setColor(QPalette::HighlightedText, QColor("#282828"));
+    pal.setColor(QPalette::Link, QColor("#076678"));
+    pal.setColor(QPalette::LinkVisited, QColor("#076678"));
+    pal.setColor(QPalette::Disabled, QPalette::Text, QColor("#a89984"));
+    pal.setColor(QPalette::Disabled, QPalette::WindowText, QColor("#a89984"));
+    pal.setColor(QPalette::Disabled, QPalette::ButtonText, QColor("#a89984"));
     return pal;
 }
 
 static QString appStyleSheet(bool darkTheme)
 {
+    // Full chrome: flat surfaces, 1px hairlines, 4px radii, yellow accent for
+    // focus and the active tab, gruvbox grays for hover/checked states.
     if (darkTheme) {
         return QStringLiteral(
-            "QToolBar { border: none; padding: 3px 6px; spacing: 3px; "
-            "background: #151a21; }"
-            "QDockWidget::title { padding: 5px 10px; background: #151a21; "
-            "border-bottom: 1px solid #232b35; color: #c9d2dc; }"
-            "QStatusBar { background: #10151b; color: #8a94a2; }"
-            "QMainWindow::separator { background: #232b35; "
-            "width: 2px; height: 2px; }"
-            "QTabBar::tab { padding: 5px 12px; color: #8a94a2; }"
-            "QTabBar::tab:selected { color: #e4e9ef; "
-            "border-bottom: 2px solid #ffb454; }"
-            "QTreeWidget { border: 1px solid #232b35; }"
-            "QTextEdit, QTextBrowser { border: none; }");
+            "QMenuBar { background: #1d2021; color: #a89984; }"
+            "QMenuBar::item { padding: 4px 10px; background: transparent;"
+            " border-radius: 4px; }"
+            "QMenuBar::item:selected { background: #32302f; color: #ebdbb2; }"
+            "QMenu { background: #282828; border: 1px solid #3c3836;"
+            " border-radius: 6px; padding: 6px; color: #ebdbb2; }"
+            "QMenu::item { padding: 6px 24px; border-radius: 4px; }"
+            "QMenu::item:selected { background: #504945;"
+            " color: #fbf1c7; }"
+            "QMenu::item:disabled { color: #665c54; }"
+            "QMenu::separator { height: 1px; background: #3c3836;"
+            " margin: 6px 8px; }"
+            "QToolBar { border: none; padding: 4px 8px; spacing: 4px;"
+            " background: #1d2021; }"
+            "QToolBar::separator { background: #3c3836; width: 1px;"
+            " margin: 6px 4px; }"
+            "QToolButton { background: transparent;"
+            " border: 1px solid transparent; border-radius: 4px;"
+            " padding: 4px 8px; color: #a89984; }"
+            "QToolButton:hover { background: #32302f;"
+            " border-color: #3c3836; color: #ebdbb2; }"
+            "QToolButton:pressed, QToolButton:checked {"
+            " background: #504945; color: #fbf1c7; }"
+            "QPushButton { background: #32302f; border: 1px solid #3c3836;"
+            " border-radius: 4px; padding: 5px 14px; color: #ebdbb2; }"
+            "QPushButton:hover { background: #504945; color: #fbf1c7; }"
+            "QPushButton:pressed { background: #282828; }"
+            "QPushButton:disabled { color: #665c54; background: #282828; }"
+            "QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {"
+            " background: #282828; border: 1px solid #3c3836;"
+            " border-radius: 4px; padding: 4px 8px; color: #ebdbb2;"
+            " selection-background-color: #504945; }"
+            "QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus,"
+            " QSpinBox:focus, QDoubleSpinBox:focus {"
+            " border-color: #fabd2f; }"
+            "QComboBox::drop-down { border: none; width: 20px; }"
+            "QMainWindow, QTabWidget { background: #1d2021; }"
+            "QTabWidget::pane { border: 1px solid #3c3836;"
+            " background: #1d2021; }"
+            "QTabBar { background: #1d2021; }"
+            "QTabBar::tab { padding: 6px 14px; background: transparent;"
+            " color: #a89984; border: 1px solid transparent;"
+            " border-bottom: 1px solid #3c3836; margin-right: 2px;"
+            " padding-bottom: 5px; }"
+            "QTabBar::tab:hover { background: #282828; color: #ebdbb2; }"
+            "QTabBar::tab:selected { background: #282828; color: #fbf1c7;"
+            " border: 1px solid #3c3836; border-bottom: 2px solid #fabd2f;"
+            " border-top-left-radius: 4px; border-top-right-radius: 4px; }"
+            "QStatusBar { background: #1d2021; color: #a89984;"
+            " border-top: 1px solid #3c3836; }"
+            "QDockWidget::title { padding: 6px 10px; background: #32302f;"
+            " border-bottom: 1px solid #3c3836; color: #a89984; }"
+            "QMainWindow::separator { background: #3c3836;"
+            " width: 2px; height: 2px; }"
+            "QScrollBar:vertical { background: #1d2021; width: 10px;"
+            " margin: 2px; }"
+            "QScrollBar::handle:vertical { background: #504945;"
+            " border-radius: 4px; min-height: 24px; }"
+            "QScrollBar::handle:vertical:hover { background: #665c54; }"
+            "QScrollBar:horizontal { background: #1d2021; height: 10px;"
+            " margin: 2px; }"
+            "QScrollBar::handle:horizontal { background: #504945;"
+            " border-radius: 4px; min-width: 24px; }"
+            "QScrollBar::handle:horizontal:hover { background: #665c54; }"
+            "QScrollBar::add-line, QScrollBar::sub-line {"
+            " height: 0px; width: 0px; }"
+            "QScrollBar::add-page, QScrollBar::sub-page {"
+            " background: transparent; }"
+            "QToolTip { background: #32302f; color: #ebdbb2;"
+            " border: 1px solid #504945; padding: 4px 8px; }"
+            "QCheckBox::indicator, QRadioButton::indicator {"
+            " width: 13px; height: 13px; border: 1px solid #504945;"
+            " border-radius: 3px; background: #282828; }"
+            "QRadioButton::indicator { border-radius: 7px; }"
+            "QCheckBox::indicator:checked, QRadioButton::indicator:checked {"
+            " background: #fabd2f; border-color: #fabd2f; }"
+            "QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {"
+            " border-color: #3c3836; background: #282828; }"
+            "QHeaderView::section { background: #282828; color: #a89984;"
+            " border: none; border-right: 1px solid #3c3836;"
+            " border-bottom: 1px solid #3c3836; padding: 4px 8px; }"
+            "QTreeWidget, QTreeView, QListView, QListWidget {"
+            " border: 1px solid #3c3836; background: #282828; }"
+            "QTreeWidget::item:selected, QTreeView::item:selected,"
+            " QListWidget::item:selected, QListView::item:selected {"
+            " background: #504945; color: #fbf1c7; }"
+            "QGroupBox { border: 1px solid #3c3836; border-radius: 4px;"
+            " margin-top: 10px; padding-top: 10px; }"
+            "QGroupBox::title { color: #a89984; subcontrol-origin: margin;"
+            " left: 10px; padding: 0 4px; }"
+            "QTextEdit, QTextBrowser { border: none; background: #282828; }"
+            "QSplitter::handle { background: #1d2021; }");
     }
     return QStringLiteral(
-        "QToolBar { border: none; padding: 3px 6px; spacing: 3px; "
-        "background: #efece5; }"
-        "QDockWidget::title { padding: 5px 10px; background: #efece5; "
-        "border-bottom: 1px solid #d8d3c8; color: #2a2f36; }"
-        "QStatusBar { background: #fbfaf7; color: #6b675f; }"
-        "QMainWindow::separator { background: #d8d3c8; "
-        "width: 2px; height: 2px; }"
-        "QTabBar::tab { padding: 5px 12px; color: #6b675f; }"
-        "QTabBar::tab:selected { color: #2a2f36; "
-        "border-bottom: 2px solid #a35412; }"
-        "QTreeWidget { border: 1px solid #d8d3c8; }"
-        "QTextEdit, QTextBrowser { border: none; }");
+        "QMenuBar { background: #f2ecdc; color: #7c6f64; }"
+        "QMenuBar::item { padding: 4px 10px; background: transparent;"
+        " border-radius: 4px; }"
+        "QMenuBar::item:selected { background: #eee5cf; color: #3c3836; }"
+        "QMenu { background: #fdfaf2; border: 1px solid #d5c4a1;"
+        " border-radius: 6px; padding: 6px; color: #3c3836; }"
+        "QMenu::item { padding: 6px 24px; border-radius: 4px; }"
+        "QMenu::item:selected { background: #d5c4a1; color: #282828; }"
+        "QMenu::item:disabled { color: #a89984; }"
+        "QMenu::separator { height: 1px; background: #d5c4a1;"
+        " margin: 6px 8px; }"
+        "QToolBar { border: none; padding: 4px 8px; spacing: 4px;"
+        " background: #f2ecdc; }"
+        "QToolBar::separator { background: #d5c4a1; width: 1px;"
+        " margin: 6px 4px; }"
+        "QToolButton { background: transparent;"
+        " border: 1px solid transparent; border-radius: 4px;"
+        " padding: 4px 8px; color: #7c6f64; }"
+        "QToolButton:hover { background: #eee5cf;"
+        " border-color: #d5c4a1; color: #3c3836; }"
+        "QToolButton:pressed, QToolButton:checked {"
+        " background: #d5c4a1; color: #282828; }"
+        "QPushButton { background: #eee5cf; border: 1px solid #d5c4a1;"
+        " border-radius: 4px; padding: 5px 14px; color: #3c3836; }"
+        "QPushButton:hover { background: #d5c4a1; color: #282828; }"
+        "QPushButton:pressed { background: #c9b68e; }"
+        "QPushButton:disabled { color: #a89984; background: #f2ecdc; }"
+        "QLineEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {"
+        " background: #fdfaf2; border: 1px solid #d5c4a1;"
+        " border-radius: 4px; padding: 4px 8px; color: #3c3836;"
+        " selection-background-color: #d5c4a1; }"
+        "QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus,"
+        " QSpinBox:focus, QDoubleSpinBox:focus { border-color: #b57614; }"
+        "QComboBox::drop-down { border: none; width: 20px; }"
+        "QMainWindow, QTabWidget { background: #f2ecdc; }"
+        "QTabWidget::pane { border: 1px solid #d5c4a1;"
+        " background: #f2ecdc; }"
+        "QTabBar { background: #f2ecdc; }"
+        "QTabBar::tab { padding: 6px 14px; background: transparent;"
+        " color: #7c6f64; border: 1px solid transparent;"
+        " border-bottom: 1px solid #d5c4a1; margin-right: 2px;"
+        " padding-bottom: 5px; }"
+        "QTabBar::tab:hover { background: #fdfaf2; color: #3c3836; }"
+        "QTabBar::tab:selected { background: #fdfaf2; color: #282828;"
+        " border: 1px solid #d5c4a1; border-bottom: 2px solid #b57614;"
+        " border-top-left-radius: 4px; border-top-right-radius: 4px; }"
+        "QStatusBar { background: #f2ecdc; color: #7c6f64;"
+        " border-top: 1px solid #d5c4a1; }"
+        "QDockWidget::title { padding: 6px 10px; background: #eee5cf;"
+        " border-bottom: 1px solid #d5c4a1; color: #7c6f64; }"
+        "QMainWindow::separator { background: #d5c4a1;"
+        " width: 2px; height: 2px; }"
+        "QScrollBar:vertical { background: #f2ecdc; width: 10px;"
+        " margin: 2px; }"
+        "QScrollBar::handle:vertical { background: #c9b68e;"
+        " border-radius: 4px; min-height: 24px; }"
+        "QScrollBar::handle:vertical:hover { background: #a89984; }"
+        "QScrollBar:horizontal { background: #f2ecdc; height: 10px;"
+        " margin: 2px; }"
+        "QScrollBar::handle:horizontal { background: #c9b68e;"
+        " border-radius: 4px; min-width: 24px; }"
+        "QScrollBar::handle:horizontal:hover { background: #a89984; }"
+        "QScrollBar::add-line, QScrollBar::sub-line {"
+        " height: 0px; width: 0px; }"
+        "QScrollBar::add-page, QScrollBar::sub-page {"
+        " background: transparent; }"
+        "QToolTip { background: #eee5cf; color: #3c3836;"
+        " border: 1px solid #bdae93; padding: 4px 8px; }"
+        "QCheckBox::indicator, QRadioButton::indicator {"
+        " width: 13px; height: 13px; border: 1px solid #bdae93;"
+        " border-radius: 3px; background: #fdfaf2; }"
+        "QRadioButton::indicator { border-radius: 7px; }"
+        "QCheckBox::indicator:checked, QRadioButton::indicator:checked {"
+        " background: #b57614; border-color: #b57614; }"
+        "QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {"
+        " border-color: #d5c4a1; background: #fdfaf2; }"
+        "QHeaderView::section { background: #f2ecdc; color: #7c6f64;"
+        " border: none; border-right: 1px solid #d5c4a1;"
+        " border-bottom: 1px solid #d5c4a1; padding: 4px 8px; }"
+        "QTreeWidget, QTreeView, QListView, QListWidget {"
+        " border: 1px solid #d5c4a1; background: #fdfaf2; }"
+        "QTreeWidget::item:selected, QTreeView::item:selected,"
+        " QListWidget::item:selected, QListView::item:selected {"
+        " background: #d5c4a1; color: #282828; }"
+        "QGroupBox { border: 1px solid #d5c4a1; border-radius: 4px;"
+        " margin-top: 10px; padding-top: 10px; }"
+        "QGroupBox::title { color: #7c6f64; subcontrol-origin: margin;"
+        " left: 10px; padding: 0 4px; }"
+        "QTextEdit, QTextBrowser { border: none; background: #fdfaf2; }"
+        "QSplitter::handle { background: #f2ecdc; }");
 }
 
 // Preview theme flag: the Markdown renderer produces small inline styles
 // (code-block headers, run links) that must follow the active theme.
 static bool gPreviewDark = false;
 static void setPreviewDark(bool dark) { gPreviewDark = dark; }
-static QString mdBarBg()  { return gPreviewDark ? QStringLiteral("#1c222b") : QStringLiteral("#efece5"); }
-static QString mdBarFg()  { return gPreviewDark ? QStringLiteral("#8a94a2") : QStringLiteral("#6b675f"); }
-static QString mdAccent() { return gPreviewDark ? QStringLiteral("#6fb3e0") : QStringLiteral("#1163a6"); }
-static QString mdOutHead(){ return gPreviewDark ? QStringLiteral("#ffb454") : QStringLiteral("#a35412"); }
+static QString mdBarBg()  { return gPreviewDark ? QStringLiteral("#1d2021") : QStringLiteral("#eee5cf"); }
+static QString mdBarFg()  { return gPreviewDark ? QStringLiteral("#a89984") : QStringLiteral("#7c6f64"); }
+static QString mdAccent() { return gPreviewDark ? QStringLiteral("#8ec07c") : QStringLiteral("#427b58"); }
+static QString mdOutHead(){ return gPreviewDark ? QStringLiteral("#fe8019") : QStringLiteral("#af3a03"); }
 
 struct RunBlock {
     QString lang;   // normalized: "c", "cpp", "python", "sql" (empty: not runnable)
@@ -1429,36 +1594,38 @@ static QString markdownToHtml(const QString &md,
 
 static QString mdCss(bool dark)
 {
+    // Gruvbox paper tones inside the preview: bright headings, hard code
+    // surfaces, muted blockquotes, gruvbox blue links.
     if (dark) {
         return QStringLiteral(
-            "body { font-family: sans-serif; color: #c9d2dc; }\n"
-            "h1 { font-size: 22pt; font-weight: bold; color: #e4e9ef; }\n"
-            "h2 { font-size: 18pt; font-weight: bold; color: #e4e9ef; }\n"
-            "h3 { font-size: 15pt; font-weight: bold; color: #dfe5ec; }\n"
-            "h4 { font-size: 13pt; font-weight: bold; color: #dfe5ec; }\n"
+            "body { font-family: sans-serif; color: #ebdbb2; }\n"
+            "h1 { font-size: 22pt; font-weight: bold; color: #fbf1c7; }\n"
+            "h2 { font-size: 18pt; font-weight: bold; color: #fbf1c7; }\n"
+            "h3 { font-size: 15pt; font-weight: bold; color: #ebdbb2; }\n"
+            "h4 { font-size: 13pt; font-weight: bold; color: #ebdbb2; }\n"
             "h5 { font-size: 12pt; font-weight: bold; }\n"
             "h6 { font-size: 11pt; font-weight: bold; }\n"
-            "code { font-family: monospace; background-color: #1c222c; }\n"
-            "pre { font-family: monospace; background-color: #151a22; }\n"
-            "blockquote { color: #8a94a2; }\n"
-            "a { color: #6fb3e0; }\n"
-            "hr { color: #2b333d; }\n"
-            "th { background-color: #1e2630; color: #e4e9ef; }\n");
+            "code { font-family: monospace; background-color: #1d2021; }\n"
+            "pre { font-family: monospace; background-color: #1d2021; }\n"
+            "blockquote { color: #a89984; }\n"
+            "a { color: #83a598; }\n"
+            "hr { color: #3c3836; }\n"
+            "th { background-color: #32302f; color: #fbf1c7; }\n");
     }
     return QStringLiteral(
-        "body { font-family: sans-serif; color: #2a2f36; }\n"
-        "h1 { font-size: 22pt; font-weight: bold; color: #1c2127; }\n"
-        "h2 { font-size: 18pt; font-weight: bold; color: #1c2127; }\n"
-        "h3 { font-size: 15pt; font-weight: bold; color: #333b44; }\n"
+        "body { font-family: sans-serif; color: #3c3836; }\n"
+        "h1 { font-size: 22pt; font-weight: bold; color: #282828; }\n"
+        "h2 { font-size: 18pt; font-weight: bold; color: #282828; }\n"
+        "h3 { font-size: 15pt; font-weight: bold; color: #3c3836; }\n"
         "h4 { font-size: 13pt; font-weight: bold; }\n"
         "h5 { font-size: 12pt; font-weight: bold; }\n"
         "h6 { font-size: 11pt; font-weight: bold; }\n"
-        "code { font-family: monospace; background-color: #eeeae0; }\n"
-        "pre { font-family: monospace; background-color: #f3f0e9; }\n"
-        "blockquote { color: #6b675f; }\n"
-        "a { color: #1163a6; }\n"
-        "hr { color: #d8d3c8; }\n"
-        "th { background-color: #efece5; color: #2a2f36; }\n");
+        "code { font-family: monospace; background-color: #eee5cf; }\n"
+        "pre { font-family: monospace; background-color: #eee5cf; }\n"
+        "blockquote { color: #7c6f64; }\n"
+        "a { color: #076678; }\n"
+        "hr { color: #d5c4a1; }\n"
+        "th { background-color: #eee5cf; color: #282828; }\n");
 }
 
 static QString plainTextHtml(const QString &text)
@@ -1688,18 +1855,26 @@ public:
 
     void applyColors(Editor *ed)
     {
-        const QColor paper   = dark ? QColor("#10151b") : QColor("#fbfaf7");
-        const QColor def     = dark ? QColor("#c9d2dc") : QColor("#2a2f36");
-        const QColor caret   = dark ? QColor("#ffb454") : QColor("#a35412");
-        const QColor caretln = dark ? QColor("#1a2028") : QColor("#f0eee8");
-        const QColor selBg   = dark ? QColor("#2a4a66") : QColor("#b3d4f5");
-        const QColor selFg   = dark ? QColor("#ffffff") : QColor("#14212e");
-        const QColor edge    = dark ? QColor("#2b333d") : QColor("#d8d3c8");
-        const QColor foldFg  = dark ? QColor("#8a94a2") : QColor("#96917f");
-        const QColor foldBg  = dark ? QColor("#1c222b") : QColor("#f3f0e9");
+        const QColor paper   = dark ? QColor("#282828") : QColor("#fdfaf2");
+        const QColor def     = dark ? QColor("#ebdbb2") : QColor("#3c3836");
+        const QColor caret   = dark ? QColor("#fabd2f") : QColor("#b57614");
+        const QColor caretln = dark ? QColor("#32302f") : QColor("#f2ecdc");
+        const QColor selBg   = dark ? QColor("#504945") : QColor("#d5c4a1");
+        const QColor selFg   = dark ? QColor("#fbf1c7") : QColor("#282828");
+        const QColor edge    = dark ? QColor("#3c3836") : QColor("#d5c4a1");
+        const QColor foldFg  = dark ? QColor("#665c54") : QColor("#a89984");
+        const QColor foldBg  = dark ? QColor("#1d2021") : QColor("#f2ecdc");
 
         ed->setPaper(paper);
         ed->setColor(def);
+        // Gutter: margin surfaces follow the chrome, line numbers muted.
+        const QColor gutterBg = dark ? QColor("#1d2021") : QColor("#f2ecdc");
+        for (int m = 0; m < 3; ++m)
+            ed->setMarginBackgroundColor(m, gutterBg);
+        ed->SendScintilla(QsciScintillaBase::SCI_STYLESETFORE, 33,
+                          static_cast<unsigned long>(((foldFg.blue() << 16) | (foldFg.green() << 8) | foldFg.red())));
+        ed->SendScintilla(QsciScintillaBase::SCI_STYLESETBACK, 33,
+                          static_cast<unsigned long>(((gutterBg.blue() << 16) | (gutterBg.green() << 8) | gutterBg.red())));
         ed->setCaretForegroundColor(caret);
         ed->setCaretLineBackgroundColor(caretln);
         ed->setCaretLineVisible(true);
@@ -1718,14 +1893,15 @@ public:
         ed->setLexer(lex);
         if (lex) {
             lex->setFont(font);
-            if (dark) {
-                lex->setColor(QColor("#d4d4d4"), -1);
-                lex->setPaper(QColor("#1e1e1e"), -1);
-                const auto it = DarkStyles.find(lang.toStdString());
-                if (it != DarkStyles.end()) {
-                    for (const auto &entry : it->second)
-                        lex->setColor(roleColor(entry.second, true), entry.first);
-                }
+            // Base style follows the editor paper; accent roles come from
+            // roleColor for both themes (gruvbox accents, darkened for
+            // light mode).
+            lex->setColor(dark ? QColor("#ebdbb2") : QColor("#3c3836"), -1);
+            lex->setPaper(dark ? QColor("#282828") : QColor("#fdfaf2"), -1);
+            const auto it = DarkStyles.find(lang.toStdString());
+            if (it != DarkStyles.end()) {
+                for (const auto &entry : it->second)
+                    lex->setColor(roleColor(entry.second, dark), entry.first);
             }
         }
         if (old && old != lex)
@@ -1999,6 +2175,52 @@ public:
         }
         for (Editor *ed : editors)
             applyColors(ed);
+        // Palette/style changes can override the QScintilla margin style;
+        // re-assert the gutter colours on the next event-loop turn.
+        QTimer::singleShot(0, this, [this]{
+            for (Editor *ed : editors) {
+                const QColor gutterBg = dark ? QColor("#1d2021")
+                                             : QColor("#f2ecdc");
+                const QColor foldFg = dark ? QColor("#665c54")
+                                            : QColor("#a89984");
+                for (int m = 0; m < 3; ++m)
+                    ed->setMarginBackgroundColor(m, gutterBg);
+                ed->SendScintilla(QsciScintillaBase::SCI_STYLESETFORE, 33,
+                                  static_cast<unsigned long>(
+                                      ((foldFg.blue() << 16) |
+                                       (foldFg.green() << 8) |
+                                       foldFg.red())));
+                ed->SendScintilla(QsciScintillaBase::SCI_STYLESETBACK, 33,
+                                  static_cast<unsigned long>(
+                                      ((gutterBg.blue() << 16) |
+                                       (gutterBg.green() << 8) |
+                                       gutterBg.red())));
+            }
+            // Scintilla's scroll bars do not re-polish with the app
+            // sheet on theme changes; style them per editor.
+            const QString sbTrough = dark
+                ? QStringLiteral("#1d2021") : QStringLiteral("#f2ecdc");
+            const QString sbThumb = dark
+                ? QStringLiteral("#504945") : QStringLiteral("#c9b68e");
+            const QString sbHover = dark
+                ? QStringLiteral("#665c54") : QStringLiteral("#a89984");
+            const QString sbSheet = QStringLiteral(
+                "QScrollBar:vertical{background:%1;width:10px;margin:2px;border:none;}"
+                "QScrollBar::handle:vertical{background:%2;border-radius:4px;"
+                "min-height:24px;}"
+                "QScrollBar::handle:vertical:hover{background:%3;}"
+                "QScrollBar:horizontal{background:%1;height:10px;margin:2px;border:none;}"
+                "QScrollBar::handle:horizontal{background:%2;border-radius:4px;"
+                "min-width:24px;}"
+                "QScrollBar::handle:horizontal:hover{background:%3;}"
+                "QScrollBar::add-line,QScrollBar::sub-line{height:0px;width:0px;}"
+                "QScrollBar::add-page,QScrollBar::sub-page{background:transparent;}")
+                .arg(sbTrough, sbThumb, sbHover);
+            for (Editor *ed : editors) {
+                ed->verticalScrollBar()->setStyleSheet(sbSheet);
+                ed->horizontalScrollBar()->setStyleSheet(sbSheet);
+            }
+        });
         if (mdView && dockMd && dockMd->isVisible())
             renderMd();
         updateStatus();
